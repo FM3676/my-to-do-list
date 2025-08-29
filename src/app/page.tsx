@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Todo } from "@/lib/types";
 import { AnimatePresence, motion } from "framer-motion";
 
+// ... (所有 import 保持不变) ...
 import { Plus, CalendarIcon, Loader2, Trash2, ListTodo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -35,17 +36,36 @@ import {
 
 export default function HomePage() {
   const [username, setUsername] = useState("");
+  // ... (其他 useState 保持不变) ...
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
   const [isTodoDialogOpen, setIsTodoDialogOpen] = useState(false);
   const [newTodoTitle, setNewTodoTitle] = useState("");
-
   const [isSubTaskDialogOpen, setIsSubTaskDialogOpen] = useState(false);
   const [newSubTaskText, setNewSubTaskText] = useState("");
   const [currentTodo, setCurrentTodo] = useState<Todo | null>(null);
 
+  // --- 新增逻辑：从 localStorage 加载和保存用户名 ---
+  // 效果1: 组件加载时，尝试从“记事本”读取已保存的用户名
+  useEffect(() => {
+    const savedUsername = localStorage.getItem("todo-app-username");
+    if (savedUsername) {
+      setUsername(savedUsername);
+    }
+  }, []); // 空数组 [] 意味着这个效果只在组件第一次加载时运行一次
+
+  // 效果2: 每当 username 状态变化时，就把它写入“记事本”
+  useEffect(() => {
+    // 我们只保存非空的用户名
+    if (username) {
+      localStorage.setItem("todo-app-username", username);
+    }
+  }, [username]); // [username] 意味着每当 username 变量的值改变时，就运行一次
+
+  // --- 逻辑新增结束 ---
+
+  // ... (所有功能函数如 fetchTodos, handleAddTodo 等都保持原样，无需改动) ...
   const fetchTodos = useCallback(async (currentUsername: string) => {
     if (!currentUsername) {
       setTodos([]);
@@ -58,17 +78,15 @@ export default function HomePage() {
         .select("*, todos(*, sub_tasks(*))")
         .eq("username", currentUsername)
         .single();
-
       if (error && error.code !== "PGRST116") {
         console.error("获取数据失败:", error);
       }
-
       if (userWithTodos && userWithTodos.todos) {
         const sortedTodos = userWithTodos.todos.sort(
           (a: { created_at: string | number | Date; }, b: { created_at: string | number | Date; }) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
-        sortedTodos.forEach((todo: { sub_tasks: { created_at: string | number | Date; }[] }) => {
+        sortedTodos.forEach((todo: { sub_tasks: { created_at: string | number | Date; }[]}) => {
           if (!todo.sub_tasks) {
             todo.sub_tasks = [];
           } else {
@@ -84,9 +102,7 @@ export default function HomePage() {
         setTodos([]);
       }
     } catch (err) {
-      // <-- THE FINAL FIX IS HERE
       console.error("一个未知错误发生:", err);
-      // We can optionally show an alert here as well
       if (err instanceof Error) {
         alert(`加载数据时发生严重错误: ${err.message}`);
       }
@@ -95,7 +111,6 @@ export default function HomePage() {
       setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     const handler = setTimeout(() => {
       fetchTodos(username);
@@ -104,7 +119,6 @@ export default function HomePage() {
       clearTimeout(handler);
     };
   }, [username, fetchTodos]);
-
   const handleAddTodo = async () => {
     if (!newTodoTitle.trim() || !username.trim()) return;
     setIsSubmitting(true);
@@ -123,7 +137,6 @@ export default function HomePage() {
         user = newUser;
       }
       if (!user) throw new Error("无法获取用户信息");
-
       const { data: newTodo, error } = await supabase
         .from("todos")
         .insert({
@@ -134,7 +147,6 @@ export default function HomePage() {
         .select("*, sub_tasks(*)")
         .single();
       if (error) throw error;
-
       newTodo.sub_tasks = [];
       setTodos([newTodo, ...todos]);
       setNewTodoTitle("");
@@ -150,7 +162,6 @@ export default function HomePage() {
       setIsSubmitting(false);
     }
   };
-
   const handleDeleteTodo = async (todoId: string) => {
     try {
       const { error } = await supabase.from("todos").delete().eq("id", todoId);
@@ -165,7 +176,6 @@ export default function HomePage() {
       }
     }
   };
-
   const handleAddSubTask = async () => {
     if (!newSubTaskText.trim() || !currentTodo) return;
     setIsSubmitting(true);
@@ -176,7 +186,6 @@ export default function HomePage() {
         .select()
         .single();
       if (error) throw error;
-
       const updatedTodos = todos.map((todo) =>
         todo.id === currentTodo.id
           ? { ...todo, sub_tasks: [...todo.sub_tasks, newSubTask] }
@@ -196,7 +205,6 @@ export default function HomePage() {
       setIsSubmitting(false);
     }
   };
-
   const handleToggleSubTask = async (
     subTaskId: string,
     currentState: boolean
@@ -205,7 +213,6 @@ export default function HomePage() {
       t.sub_tasks.some((st) => st.id === subTaskId)
     );
     if (!parentTodo) return;
-
     const originalTodos = JSON.parse(JSON.stringify(todos));
     const updatedTodos = todos.map((todo) => {
       if (todo.id === parentTodo.id) {
@@ -224,14 +231,12 @@ export default function HomePage() {
       return todo;
     });
     setTodos(updatedTodos);
-
     try {
       const { error: subTaskError } = await supabase
         .from("sub_tasks")
         .update({ is_completed: !currentState })
         .eq("id", subTaskId);
       if (subTaskError) throw subTaskError;
-
       const finalParentTodoState = updatedTodos.find(
         (t) => t.id === parentTodo.id
       );
@@ -252,14 +257,12 @@ export default function HomePage() {
       }
     }
   };
-
   const currentDate = new Date().toLocaleDateString("zh-CN", {
     year: "numeric",
     month: "long",
     day: "numeric",
     weekday: "long",
   });
-
   const calculateProgress = (todo: Todo) => {
     if (!todo.sub_tasks || todo.sub_tasks.length === 0) return 0;
     const completedCount = todo.sub_tasks.filter(
@@ -269,7 +272,7 @@ export default function HomePage() {
   };
 
   return (
-    // JSX part is unchanged
+    // ... (所有 JSX 界面代码保持不变) ...
     <div className="space-y-8">
       <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b pb-6">
         <h1 className="text-4xl font-bold tracking-tight text-gray-900">
@@ -285,12 +288,10 @@ export default function HomePage() {
           />
         </div>
       </header>
-
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-3 text-xl font-semibold text-gray-700">
           <CalendarIcon className="h-6 w-6" /> <span>{currentDate}</span>
         </div>
-
         <Dialog open={isTodoDialogOpen} onOpenChange={setIsTodoDialogOpen}>
           <DialogTrigger asChild>
             <Button size="lg" disabled={!username}>
@@ -333,7 +334,6 @@ export default function HomePage() {
           </DialogContent>
         </Dialog>
       </div>
-
       <div className="space-y-4">
         {loading && (
           <div className="flex justify-center items-center p-12">
@@ -341,7 +341,6 @@ export default function HomePage() {
             <p className="ml-3 text-lg">加载中...</p>
           </div>
         )}
-
         <AnimatePresence>
           {!loading && username && todos.length === 0 && (
             <motion.div
@@ -360,7 +359,6 @@ export default function HomePage() {
             </motion.div>
           )}
         </AnimatePresence>
-
         {!loading && !username && (
           <div className="text-center p-12 bg-white rounded-xl shadow-sm border">
             <h3 className="text-xl font-semibold text-gray-800">欢迎！</h3>
@@ -369,7 +367,6 @@ export default function HomePage() {
             </p>
           </div>
         )}
-
         <AnimatePresence>
           {!loading &&
             todos.map((todo) => (
@@ -490,7 +487,6 @@ export default function HomePage() {
                       </AlertDialog>
                     </div>
                   </CardHeader>
-
                   <CardContent className="pt-0 pb-5">
                     {todo.sub_tasks?.length > 0 && (
                       <div className="space-y-4">

@@ -23,7 +23,7 @@ export default function RootLayout({
     <html lang="zh-CN">
       <head>
         {/* 添加主题色 */}
-        <meta name="theme-color" content="#10b981" />
+        <meta name="theme-color" content="#f9fafb" />
       </head>
       <body className={`${poppins.className} bg-slate-50 text-slate-800`}>
         <main className="container mx-auto max-w-2xl p-4 sm:p-6 md:p-8">
