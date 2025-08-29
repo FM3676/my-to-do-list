@@ -1,103 +1,525 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { Todo } from "@/lib/types";
+import { AnimatePresence, motion } from "framer-motion";
+
+import { Plus, CalendarIcon, Loader2, Trash2, ListTodo } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+export default function HomePage() {
+  const [username, setUsername] = useState("");
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 主待办弹窗的状态
+  const [isTodoDialogOpen, setIsTodoDialogOpen] = useState(false);
+  const [newTodoTitle, setNewTodoTitle] = useState("");
+
+  // 子项目弹窗的状态
+  const [isSubTaskDialogOpen, setIsSubTaskDialogOpen] = useState(false);
+  const [newSubTaskText, setNewSubTaskText] = useState("");
+  const [currentTodo, setCurrentTodo] = useState<Todo | null>(null);
+
+  const fetchTodos = useCallback(async (currentUsername: string) => {
+    if (!currentUsername) {
+      setTodos([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const { data: userWithTodos, error } = await supabase
+        .from("users")
+        .select("*, todos(*, sub_tasks(*))")
+        .eq("username", currentUsername)
+        .single();
+
+      if (error && error.code !== "PGRST116") {
+        console.error("获取数据失败:", error);
+      }
+
+      if (userWithTodos && userWithTodos.todos) {
+        const sortedTodos = userWithTodos.todos.sort(
+          (
+            a: { created_at: string | number | Date },
+            b: { created_at: string | number | Date }
+          ) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        sortedTodos.forEach((todo: { sub_tasks: any[] }) => {
+          if (!todo.sub_tasks) {
+            todo.sub_tasks = [];
+          } else {
+            // 对子任务也进行排序
+            todo.sub_tasks.sort(
+              (a, b) =>
+                new Date(a.created_at).getTime() -
+                new Date(b.created_at).getTime()
+            );
+          }
+        });
+        setTodos(sortedTodos);
+      } else {
+        setTodos([]);
+      }
+    } catch (err) {
+      console.error("一个未知错误发生:", err);
+      setTodos([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      fetchTodos(username);
+    }, 500);
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [username, fetchTodos]);
+
+  const handleAddTodo = async () => {
+    if (!newTodoTitle.trim() || !username.trim()) return;
+    setIsSubmitting(true);
+    try {
+      let { data: user } = await supabase
+        .from("users")
+        .select("id")
+        .eq("username", username)
+        .single();
+      if (!user) {
+        const { data: newUser } = await supabase
+          .from("users")
+          .insert({ username })
+          .select("id")
+          .single();
+        user = newUser;
+      }
+      if (!user) throw new Error("无法获取用户信息");
+
+      const { data: newTodo, error } = await supabase
+        .from("todos")
+        .insert({
+          title: newTodoTitle,
+          user_id: user.id,
+          date: new Date().toISOString().split("T")[0],
+        })
+        .select("*, sub_tasks(*)")
+        .single();
+      if (error) throw error;
+
+      newTodo.sub_tasks = []; // 确保新 todo 有一个空的 sub_tasks 数组
+      setTodos([newTodo, ...todos]);
+      setNewTodoTitle("");
+      setIsTodoDialogOpen(false);
+    } catch (error: any) {
+      console.error("创建待办失败:", error);
+      alert(`出错了: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteTodo = async (todoId: string) => {
+    try {
+      const { error } = await supabase.from("todos").delete().eq("id", todoId);
+      if (error) throw error;
+      setTodos(todos.filter((todo) => todo.id !== todoId));
+    } catch (error: any) {
+      console.error("删除待办失败:", error);
+      alert(`出错了: ${error.message}`);
+    }
+  };
+
+  const handleAddSubTask = async () => {
+    if (!newSubTaskText.trim() || !currentTodo) return;
+    setIsSubmitting(true);
+    try {
+      const { data: newSubTask, error } = await supabase
+        .from("sub_tasks")
+        .insert({ todo_id: currentTodo.id, text: newSubTaskText })
+        .select()
+        .single();
+      if (error) throw error;
+
+      const updatedTodos = todos.map((todo) =>
+        todo.id === currentTodo.id
+          ? { ...todo, sub_tasks: [...todo.sub_tasks, newSubTask] }
+          : todo
+      );
+      setTodos(updatedTodos);
+      setNewSubTaskText("");
+      setIsSubTaskDialogOpen(false);
+    } catch (error: any) {
+      console.error("创建子项目失败:", error);
+      alert(`出错了: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleToggleSubTask = async (
+    subTaskId: string,
+    currentState: boolean
+  ) => {
+    const parentTodo = todos.find((t) =>
+      t.sub_tasks.some((st) => st.id === subTaskId)
+    );
+    if (!parentTodo) return;
+
+    const originalTodos = [...todos];
+    const updatedTodos = todos.map((todo) => {
+      if (todo.id === parentTodo.id) {
+        const updatedSubTasks = todo.sub_tasks.map((st) =>
+          st.id === subTaskId ? { ...st, is_completed: !currentState } : st
+        );
+        const allSubTasksCompleted =
+          updatedSubTasks.length > 0 &&
+          updatedSubTasks.every((st) => st.is_completed);
+        return {
+          ...todo,
+          sub_tasks: updatedSubTasks,
+          is_completed: allSubTasksCompleted,
+        };
+      }
+      return todo;
+    });
+    setTodos(updatedTodos);
+
+    try {
+      const { error: subTaskError } = await supabase
+        .from("sub_tasks")
+        .update({ is_completed: !currentState })
+        .eq("id", subTaskId);
+      if (subTaskError) throw subTaskError;
+
+      const finalParentTodoState = updatedTodos.find(
+        (t) => t.id === parentTodo.id
+      );
+      if (finalParentTodoState) {
+        const { error: todoError } = await supabase
+          .from("todos")
+          .update({ is_completed: finalParentTodoState.is_completed })
+          .eq("id", parentTodo.id);
+        if (todoError) throw todoError;
+      }
+    } catch (error) {
+      console.error("更新失败，正在回滚UI:", error);
+      setTodos(originalTodos);
+      alert("更新失败，请重试。");
+    }
+  };
+
+  const currentDate = new Date().toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  });
+
+  const calculateProgress = (todo: Todo) => {
+    if (todo.sub_tasks.length === 0) return 0;
+    const completedCount = todo.sub_tasks.filter(
+      (st) => st.is_completed
+    ).length;
+    return (completedCount / todo.sub_tasks.length) * 100;
+  };
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <div className="space-y-8">
+      <header className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 border-b pb-6">
+        <h1 className="text-4xl font-bold tracking-tight text-gray-900">
+          我的待办清单
+        </h1>
+        <div className="flex items-center gap-2">
+          <Input
+            id="username"
+            placeholder="输入或创建一个用户名..."
+            className="max-w-xs text-base"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </header>
+
+      <div className="flex justify-between items-center">
+        <div className="flex items-center gap-3 text-xl font-semibold text-gray-700">
+          <CalendarIcon className="h-6 w-6" /> <span>{currentDate}</span>
+        </div>
+
+        <Dialog open={isTodoDialogOpen} onOpenChange={setIsTodoDialogOpen}>
+          <DialogTrigger asChild>
+            <Button size="lg" disabled={!username}>
+              <Plus className="mr-2 h-5 w-5" /> 添加新待办
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>添加一个新的待办事项</DialogTitle>
+              <DialogDescription>
+                为用户 “{username}” 添加一个新任务。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="title" className="text-right">
+                  标题
+                </Label>
+                <Input
+                  id="title"
+                  value={newTodoTitle}
+                  onChange={(e) => setNewTodoTitle(e.target.value)}
+                  placeholder="例如：学习 Supabase"
+                  className="col-span-3"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="submit"
+                onClick={handleAddTodo}
+                disabled={isSubmitting}
+              >
+                {isSubmitting && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                保存
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      <div className="space-y-4">
+        {loading && (
+          <div className="flex justify-center items-center p-12">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            <p className="ml-3 text-lg">加载中...</p>
+          </div>
+        )}
+
+        <AnimatePresence>
+          {!loading && username && todos.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="text-center p-12 bg-white rounded-xl shadow-sm border"
+            >
+              <ListTodo className="mx-auto h-16 w-16 text-gray-300" />
+              <h3 className="mt-4 text-xl font-semibold text-gray-800">
+                万事俱备！
+              </h3>
+              <p className="mt-2 text-base text-gray-500">
+                你还没有任何待办事项。点击右上角开始添加吧！
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {!loading && !username && (
+          <div className="text-center p-12 bg-white rounded-xl shadow-sm border">
+            <h3 className="text-xl font-semibold text-gray-800">欢迎！</h3>
+            <p className="mt-2 text-base text-gray-500">
+              请输入一个用户名来开始你的待办之旅。
+            </p>
+          </div>
+        )}
+
+        <AnimatePresence>
+          {!loading &&
+            todos.map((todo) => (
+              <motion.div
+                key={todo.id}
+                layout
+                initial={{ opacity: 0, y: 50, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+              >
+                <Card
+                  className={`transition-all duration-300 ${
+                    todo.is_completed
+                      ? "bg-gray-50 opacity-60"
+                      : "bg-white hover:shadow-md"
+                  }`}
+                >
+                  <CardHeader className="flex flex-row items-center justify-between py-4">
+                    <CardTitle
+                      className={`text-xl font-semibold ${
+                        todo.is_completed
+                          ? "line-through text-gray-400"
+                          : "text-gray-800"
+                      }`}
+                    >
+                      {todo.title}
+                    </CardTitle>
+                    <div className="flex items-center gap-1">
+                      <Dialog
+                        open={
+                          isSubTaskDialogOpen && currentTodo?.id === todo.id
+                        }
+                        onOpenChange={(isOpen) => {
+                          if (!isOpen) setCurrentTodo(null);
+                          setIsSubTaskDialogOpen(isOpen);
+                        }}
+                      >
+                        <DialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => setCurrentTodo(todo)}
+                          >
+                            <Plus className="h-4 w-4 text-gray-500" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[425px]">
+                          <DialogHeader>
+                            <DialogTitle>
+                              为 “{currentTodo?.title}” 添加子项目
+                            </DialogTitle>
+                            <DialogDescription>
+                              输入子项目的具体内容，然后点击添加。
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="grid gap-4 py-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label
+                                htmlFor="subtask-text"
+                                className="text-right"
+                              >
+                                内容
+                              </Label>
+                              <Input
+                                id="subtask-text"
+                                value={newSubTaskText}
+                                onChange={(e) =>
+                                  setNewSubTaskText(e.target.value)
+                                }
+                                placeholder="例如：完成第一章节"
+                                className="col-span-3"
+                              />
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              type="submit"
+                              onClick={handleAddSubTask}
+                              disabled={isSubmitting}
+                            >
+                              {isSubmitting && (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              )}
+                              添加
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:bg-red-50 hover:text-red-600"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>确定要删除吗？</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              此操作无法撤销。这将会永久删除 “{todo.title}”
+                              以及其下所有子项目。
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>取消</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDeleteTodo(todo.id)}
+                              className="bg-red-600 hover:bg-red-700"
+                            >
+                              删除
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="pt-0 pb-5">
+                    {todo.sub_tasks?.length > 0 && (
+                      <div className="space-y-4">
+                        <Progress
+                          value={calculateProgress(todo)}
+                          className="h-2"
+                        />
+                        <div className="space-y-3">
+                          {todo.sub_tasks.map((subTask) => (
+                            <div
+                              key={subTask.id}
+                              className="flex items-center gap-3"
+                            >
+                              <Checkbox
+                                id={`subtask-${subTask.id}`}
+                                checked={subTask.is_completed}
+                                onCheckedChange={() =>
+                                  handleToggleSubTask(
+                                    subTask.id,
+                                    subTask.is_completed
+                                  )
+                                }
+                                className="h-5 w-5"
+                              />
+                              <Label
+                                htmlFor={`subtask-${subTask.id}`}
+                                className={`text-base font-medium transition-colors ${
+                                  subTask.is_completed
+                                    ? "line-through text-gray-400"
+                                    : "text-gray-700"
+                                }`}
+                              >
+                                {subTask.text}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
