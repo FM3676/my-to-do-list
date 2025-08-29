@@ -68,7 +68,7 @@ export default function HomePage() {
           (a: { created_at: string | number | Date; }, b: { created_at: string | number | Date; }) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
-        sortedTodos.forEach((todo: { sub_tasks: any[]; }) => {
+        sortedTodos.forEach((todo: { sub_tasks: { created_at: string | number | Date; }[] }) => {
           if (!todo.sub_tasks) {
             todo.sub_tasks = [];
           } else {
